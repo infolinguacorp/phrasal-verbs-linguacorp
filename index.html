@@ -508,6 +508,116 @@ function matchesQuery(text, meanings, q){
   return meanings.some(m => m.toLowerCase().includes(q));
 }
 
+let currentData = [];
+let currentIsPv = true;
+let renderedCount = 0;
+const BATCH_SIZE = 60;
+let observer = null;
+
+function buildRow(item, isPv){
+  const row = document.createElement('div');
+  row.className = 'row';
+  row.setAttribute('role','button');
+  row.setAttribute('tabindex','0');
+  row.setAttribute('aria-expanded','false');
+
+  const head = document.createElement('div');
+  head.className = 'row-head';
+
+  const caret = document.createElement('span');
+  caret.className = 'caret';
+  head.appendChild(caret);
+
+  const verbSpan = document.createElement('span');
+  verbSpan.className = 'verb';
+  verbSpan.innerHTML = isPv ? highlightParticle(item.v, item.p) : escapeHtml(item.e);
+  verbSpan.style.minWidth = '120px';
+  head.appendChild(verbSpan);
+
+  if(!isPv && item.variant){
+    const tag = document.createElement('span');
+    tag.className = 'tag';
+    tag.textContent = item.variant;
+    head.appendChild(tag);
+  }
+
+  const preview = document.createElement('span');
+  preview.className = 'preview';
+  preview.textContent = item.m[0] || '';
+  head.appendChild(preview);
+
+  const badge = document.createElement('span');
+  badge.className = 'count-badge';
+  badge.textContent = item.m.length + (item.m.length===1?' sentido':' sentidos');
+  head.appendChild(badge);
+
+  row.appendChild(head);
+
+  const body = document.createElement('div');
+  body.className = 'row-body';
+  const ol = document.createElement('ol');
+  item.m.forEach(m => {
+    const li = document.createElement('li');
+    li.textContent = m;
+    ol.appendChild(li);
+  });
+  body.appendChild(ol);
+
+  if(item.m_es && item.m_es.length){
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'reveal-btn';
+    btn.textContent = '🇪🇸 Ver en español';
+    const esOl = document.createElement('ol');
+    esOl.className = 'es-list';
+    item.m_es.forEach(m => {
+      const li = document.createElement('li');
+      li.textContent = m;
+      esOl.appendChild(li);
+    });
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const shown = esOl.classList.toggle('show');
+      btn.textContent = shown ? '🇪🇸 Ocultar español' : '🇪🇸 Ver en español';
+    });
+    body.appendChild(btn);
+    body.appendChild(esOl);
+  }
+
+  row.appendChild(body);
+
+  function toggle(){
+    const open = row.getAttribute('aria-expanded') === 'true';
+    row.setAttribute('aria-expanded', open ? 'false' : 'true');
+  }
+  head.addEventListener('click', toggle);
+  row.addEventListener('keydown', (e) => {
+    if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); toggle(); }
+  });
+
+  return row;
+}
+
+function renderNextBatch(){
+  const slice = currentData.slice(renderedCount, renderedCount + BATCH_SIZE);
+  if(slice.length === 0) return;
+  const frag = document.createDocumentFragment();
+  slice.forEach(item => frag.appendChild(buildRow(item, currentIsPv)));
+  const sentinel = document.getElementById('scrollSentinel');
+  if(sentinel){
+    listEl.insertBefore(frag, sentinel);
+  } else {
+    listEl.appendChild(frag);
+  }
+  renderedCount += slice.length;
+
+  if(renderedCount >= currentData.length){
+    const sentinelEl = document.getElementById('scrollSentinel');
+    if(sentinelEl) sentinelEl.remove();
+    if(observer) observer.disconnect();
+  }
+}
+
 function render(){
   renderParticleRail();
   renderAlphaRail();
@@ -534,109 +644,32 @@ function render(){
   if(state.letter) filterBits.push('letra: ' + state.letter);
   activeFiltersEl.textContent = filterBits.join(' · ');
 
+  if(observer) observer.disconnect();
+  listEl.innerHTML = '';
+
   if(data.length === 0){
     listEl.innerHTML = '<div class="empty">No encontramos coincidencias.<br>Prueba con otra palabra o quita el filtro.</div>';
     return;
   }
 
-  const MAX_RENDER = 500;
-  const shown = data.slice(0, MAX_RENDER);
+  currentData = data;
+  currentIsPv = isPv;
+  renderedCount = 0;
 
-  const frag = document.createDocumentFragment();
-  shown.forEach((item, i) => {
-    const row = document.createElement('div');
-    row.className = 'row';
-    row.setAttribute('role','button');
-    row.setAttribute('tabindex','0');
-    row.setAttribute('aria-expanded','false');
+  const sentinel = document.createElement('div');
+  sentinel.id = 'scrollSentinel';
+  sentinel.style.height = '1px';
+  listEl.appendChild(sentinel);
 
-    const head = document.createElement('div');
-    head.className = 'row-head';
+  renderNextBatch();
 
-    const caret = document.createElement('span');
-    caret.className = 'caret';
-    head.appendChild(caret);
-
-    const verbSpan = document.createElement('span');
-    verbSpan.className = 'verb';
-    verbSpan.innerHTML = isPv ? highlightParticle(item.v, item.p) : escapeHtml(item.e);
-    verbSpan.style.minWidth = '120px';
-    head.appendChild(verbSpan);
-
-    if(!isPv && item.variant){
-      const tag = document.createElement('span');
-      tag.className = 'tag';
-      tag.textContent = item.variant;
-      head.appendChild(tag);
-    }
-
-    const preview = document.createElement('span');
-    preview.className = 'preview';
-    preview.textContent = item.m[0] || '';
-    head.appendChild(preview);
-
-    const badge = document.createElement('span');
-    badge.className = 'count-badge';
-    badge.textContent = item.m.length + (item.m.length===1?' sentido':' sentidos');
-    head.appendChild(badge);
-
-    row.appendChild(head);
-
-    const body = document.createElement('div');
-    body.className = 'row-body';
-    const ol = document.createElement('ol');
-    item.m.forEach(m => {
-      const li = document.createElement('li');
-      li.textContent = m;
-      ol.appendChild(li);
-    });
-    body.appendChild(ol);
-
-    if(item.m_es && item.m_es.length){
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'reveal-btn';
-      btn.textContent = '🇪🇸 Ver en español';
-      const esOl = document.createElement('ol');
-      esOl.className = 'es-list';
-      item.m_es.forEach(m => {
-        const li = document.createElement('li');
-        li.textContent = m;
-        esOl.appendChild(li);
-      });
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const shown = esOl.classList.toggle('show');
-        btn.textContent = shown ? '🇪🇸 Ocultar español' : '🇪🇸 Ver en español';
-      });
-      body.appendChild(btn);
-      body.appendChild(esOl);
-    }
-
-    row.appendChild(body);
-
-    function toggle(){
-      const open = row.getAttribute('aria-expanded') === 'true';
-      row.setAttribute('aria-expanded', open ? 'false' : 'true');
-    }
-    head.addEventListener('click', toggle);
-    row.addEventListener('keydown', (e) => {
-      if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); toggle(); }
-    });
-
-    frag.appendChild(row);
-  });
-
-  listEl.innerHTML = '';
-  listEl.appendChild(frag);
-
-  if(data.length > MAX_RENDER){
-    const note = document.createElement('div');
-    note.className = 'empty';
-    note.style.padding = '20px';
-    note.style.fontSize = '13px';
-    note.textContent = 'Mostrando los primeros ' + MAX_RENDER + ' de ' + data.length + ' resultados. Afina tu búsqueda para ver más.';
-    listEl.appendChild(note);
+  if(currentData.length > renderedCount){
+    observer = new IntersectionObserver((entries) => {
+      if(entries[0].isIntersecting){
+        renderNextBatch();
+      }
+    }, { root: null, rootMargin: '600px' });
+    observer.observe(sentinel);
   }
 }
 
